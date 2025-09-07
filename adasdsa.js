@@ -5,7 +5,7 @@ let replacements = {};
 let dumpedVarNames = {};
 const storeName = "a" + crypto.randomUUID().replaceAll("-", "").substring(16);
 const vapeName = crypto.randomUUID().replaceAll("-", "").substring(16);
-const VERSION = "3.0.6";
+const VERSION = "5.0.0";
 
 // ANTICHEAT HOOK
 function replaceAndCopyFunction(oldFunc, newFunc) {
@@ -67,8 +67,7 @@ function modifyCode(text) {
 
 	for(const [replacement, code] of Object.entries(replacements)) {
 		modifiedText = modifiedText.replace(replacement, code[1] ? code[0] : replacement + code[0]);
-		// TODO: handle the 2nd occurrence, which inside a string in a varible called "jsContent".
-		// (screw you vector)
+
 	}
 
 	const newScript = document.createElement("script");
@@ -107,10 +106,16 @@ function modifyCode(text) {
 		}, 0);
 	`);
 	addModification('y:this.getEntityBoundingBox().min.y,', 'y:sendY != false ? sendY : this.getEntityBoundingBox().min.y,', true);
+	addModification("const player=new ClientEntityPlayer", `
+// note: when using the desync,
+// your position will only update every 20 ticks.
+let serverPos = player.pos.clone();
+`);
 	addModification('Potions.jump.getId(),"5");', `
 		let blocking = false;
 		let sendYaw = false;
 		let sendY = false;
+        let desync = false;
 		let breakStart = Date.now();
 		let noMove = Date.now();
 
@@ -122,6 +127,24 @@ function modifyCode(text) {
 
 		let tickLoop = {};
 		let renderTickLoop = {};
+  
+  /**
+		 * clamps the given position to the given range
+		 * @param {Vector3} pos
+		 * @param {Vector3} serverPos
+		 * @param {number} range
+		 * @returns {Vector3} the clamped position
+		**/
+		function desyncMath(pos, serverPos, range) {
+			const moveVec = {x: (pos.x - serverPos.x), y: (pos.y - serverPos.y), z: (pos.z - serverPos.z)};
+			const moveMag = Math.sqrt(moveVec.x * moveVec.x + moveVec.y * moveVec.y + moveVec.z * moveVec.z);
+
+			return moveMag > range ? {
+				x: serverPos.x + ((moveVec.x / moveMag) * range),
+				y: serverPos.y + ((moveVec.y / moveMag) * range),
+				z: serverPos.z + ((moveVec.z / moveMag) * range)
+			} : pos;
+		}
 
 		let lastJoined, velocityhori, velocityvert, chatdisablermsg, textguifont, textguisize, textguishadow, attackedEntity, stepheight;
 		let attackTime = Date.now();
@@ -143,7 +166,7 @@ function modifyCode(text) {
 	`);
 
 	addModification('VERSION$1," | ",', `"${vapeName} v${VERSION}"," | ",`);
-	addModification('if(!x.canConnect){', 'x.errorMessage = x.errorMessage === "Could not join server. You are connected to a VPN or proxy. Please disconnect from it and refresh the page." ? "[Vape] You\'re IP banned (these probably don\'t exist now anyways)" : x.errorMessage;');
+	addModification('if(!x.canConnect){', 'x.errorMessage = x.errorMessage === "Could not join server. You are connected to a VPN or proxy. Please disconnect from it and refresh the page." ? "You\'re maybe IP banned or you\'re using a vpn " : x.errorMessage;');
 
 	// DRAWING SETUP
 	addModification('I(this,"glintTexture");', `
@@ -160,8 +183,8 @@ function modifyCode(text) {
 	addModification('skinManager.loadTextures(),', ',this.loadVape(),');
 	addModification('async loadSpritesheet(){', `
 		async loadVape() {
-			this.vapeTexture = await this.loader.loadAsync("${corsMoment("https://codeberg.org/RealPacket/VapeForMiniblox/raw/branch/main/assets/logo.png")}");
-			this.v4Texture = await this.loader.loadAsync("${corsMoment("https://codeberg.org/RealPacket/VapeForMiniblox/raw/branch/main/assets/logov4.png")}");
+			this.vapeTexture = await this.loader.loadAsync("${corsMoment("https://raw.githubusercontent.com/progmem-cc/miniblox.impact.client.updatedv2/refs/heads/main/logo.png")}");
+			this.v4Texture = await this.loader.loadAsync("${corsMoment("https://raw.githubusercontent.com/progmem-cc/miniblox.impact.client.updatedv2/refs/heads/main/logov4.png")}");
 		}
 		async loadSpritesheet(){
 	`, true);
@@ -215,20 +238,13 @@ function modifyCode(text) {
 		}
 	`);
 
-	// HOOKS
-	// instructions because this replacement is very vague when trying to find it after an update:
-	// 1. search for "moveFlying("
-	// 2. select the first result
-	// 3. look for "this.motion.z+="
-	// 4. use that as the replacement
-	// thanks GOD that I had the old bundle to find this
+	
 	addModification('+=h*y+u*x}', `
 		if (this == player) {
 			for(const [index, func] of Object.entries(tickLoop)) if (func) func();
 		}
 	`);
 	addModification('this.game.unleash.isEnabled("disable-ads")', 'true', true);
-	// in EntityManager, renderEntities function
 	addModification('h.render()})', '; for(const [index, func] of Object.entries(renderTickLoop)) if (func) func();');
 	addModification('updateNameTag(){let h="white",p=1;', 'this.entity.team = this.entity.profile.cosmetics.color;');
 	addModification('connect(u,h=!1,p=!1){', 'lastJoined = u;');
@@ -240,12 +256,7 @@ function modifyCode(text) {
 			}, 400);
 		}
 	`);
-	// MUSIC FIX
-	addModification('const u=lodashExports.sample(MUSIC);',
-		`const vol = Options$1.sound.music.volume / BASE_VOLUME;
-		if (vol <= 0 && enabledModules["MusicFix"])
-			return; // don't play, we don't want to waste resources or bandwidth on this.
-		const u = lodashExports.sample(MUSIC);`, true)
+
 	addModification('ClientSocket.on("CPacketMessage",h=>{', `
 		if (player && h.text && !h.text.startsWith(player.name) && enabledModules["ChatDisabler"] && chatDelay < Date.now()) {
 			chatDelay = Date.now() + 1000;
@@ -319,8 +330,16 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 	// NOSLOWDOWN
 	addModification('updatePlayerMoveState(),this.isUsingItem()', 'updatePlayerMoveState(),(this.isUsingItem() && !enabledModules["NoSlowdown"])', true);
 	addModification('S&&!this.isUsingItem()', 'S&&!(this.isUsingItem() && !enabledModules["NoSlowdown"])', true);
-	// TODO: fix this
-	// addModification('0),this.sneak', ' && !enabledModules["NoSlowdown"]');
+
+	 // DESYNC
+	addModification("this.inputSequenceNumber++", 'desync ? this.inputSequenceNumber : this.inputSequenceNumber++', true);
+	// addModification("new PBVector3({x:this.pos.x,y:this.pos.y,z:this.pos.z})", "desync ? inputPos : inputPos = this.pos", true);
+
+	// auto-reset the desync variable.
+	addModification("reconcileServerPosition(h){", "serverPos = h;");
+
+	// hook into reconcileServerPosition
+	// so we know our server pos
 
 	// STEP
 	addModification('p.y=this.stepHeight;', 'p.y=(enabledModules["Step"]?Math.max(stepheight[1],this.stepHeight):this.stepHeight);', true);
@@ -335,12 +354,6 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 
 	// INVWALK
 	addModification('keyPressed(m)&&Game.isActive(!1)', 'keyPressed(m)&&(Game.isActive(!1)||enabledModules["InvWalk"]&&!game.chat.showInput)', true);
-
-	// TIMER
-	addModification('MSPT=50,', '', true);
-	addModification('MODE="production";', 'let MSPT = 50;');
-	addModification('I(this,"controller");', 'I(this, "tickLoop");');
-	addModification('setInterval(()=>this.fixedUpdate(),MSPT)', 'this.tickLoop=setInterval(()=>this.fixedUpdate(),MSPT)', true);
 
 	// PHASE
 	addModification('calculateXOffset(A,this.getEntityBoundingBox(),g.x)', 'enabledModules["Phase"] ? g.x : calculateXOffset(A,this.getEntityBoundingBox(),g.x)', true);
@@ -383,56 +396,6 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 		}
 	`);
 
-	// SKIN
-	addModification('ClientSocket.on("CPacketSpawnPlayer",h=>{const p=m.world.getPlayerById(h.id);', `
-		if (h.socketId === player.socketId && enabledModules["AntiBan"]) {
-			hud3D.remove(hud3D.rightArm);
-			hud3D.rightArm = undefined;
-			player.profile.cosmetics.skin = "GrandDad";
-			h.cosmetics.skin = "GrandDad";
-			h.cosmetics.cape = "GrandDad";
-		}
-	`);
-	addModification('bob:{id:"bob",name:"Bob",tier:0,skinny:!1},', 'GrandDad:{id:"GrandDad",name:"GrandDad",tier:2,skinny:!1},');
-	addModification('cloud:{id:"cloud",name:"Cloud",tier:2},', 'GrandDad:{id:"GrandDad",name:"GrandDad",tier:2},');
-	addModification('async downloadSkin(u){', `
-		if (u == "GrandDad") {
-			const $ = skins[u];
-			return new Promise((et, tt) => {
-				textureManager.loader.load("${corsMoment("https://codeberg.org/RealPacket/VapeForMiniblox/raw/branch/main/assets/skin.png")}", rt => {
-					const nt = {
-						atlas: rt,
-						id: u,
-						skinny: $.skinny,
-						ratio: rt.image.width / 64
-					};
-					SkinManager.createAtlasMat(nt), this.skins[u] = nt, et();
-				}, void 0, function(rt) {
-					console.error(rt), et();
-				});
-			});
-		}
-	`);
-	addModification('async downloadCape(u){', `
-		if (u == "GrandDad") {
-			const $ = capes[u];
-			return new Promise((et, tt) => {
-				textureManager.loader.load("${corsMoment("https://codeberg.org/RealPacket/VapeForMiniblox/raw/branch/main/assets/cape.png")}", rt => {
-					const nt = {
-						atlas: rt,
-						id: u,
-						name: $.name,
-						ratio: rt.image.width / 64,
-						rankLevel: $.tier,
-						isCape: !0
-					};
-					SkinManager.createAtlasMat(nt), this.capes[u] = nt, et();
-				}, void 0, function(rt) {
-					console.error(rt), et();
-				});
-			});
-		}
-	`);
 
 	// LOGIN BYPASS
 	addModification('new SPacketLoginStart({requestedUuid:localStorage.getItem(REQUESTED_UUID_KEY)??void 0,session:localStorage.getItem(SESSION_TOKEN_KEY)??"",hydration:localStorage.getItem("hydration")??"0",metricsId:localStorage.getItem("metrics_id")??"",clientVersion:VERSION$1})', 'new SPacketLoginStart({requestedUuid:void 0,session:(enabledModules["AntiBan"] ? "" : (localStorage.getItem(SESSION_TOKEN_KEY) ?? "")),hydration:"0",metricsId:uuid$1(),clientVersion:VERSION$1})', true);
@@ -442,26 +405,6 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 
 	// SWING FIX
 	addModification('player.getActiveItemStack().item instanceof', 'null == ', true);
-
-	// CONTAINER FIX (vector is very smart)
-	/**
-	 Description:
-	 In some cases, player.openChest may not be defined.
-	 In those cases, it will be undefined.
-	 ```js
-	 const m = player.openContainer,
-	 u = m.getLowerChestInventory(),
-	 h = m.getLowerChestInventory().getSizeInventory() > 27,
-	 p = h ? 27 : 0;
-	 ```
-	 and because `u` is invoking a function in `m`,
-	 it'll throw an error and break all of the UI.
-	 */
-	addModification(
-		'const m=player.openContainer',
-		`const m = player.openContainer ?? { getLowerChestInventory: () => {getSizeInventory: () => 0} }`,
-		true
-	);
 
 	// COMMANDS
 	addModification('submit(u){', `
@@ -564,6 +507,13 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 		}
 	`);
 
+	// CONTAINER FIX 
+	addModification(
+		'const m=player.openContainer',
+		`const m = player.openContainer ?? { getLowerChestInventory: () => {getSizeInventory: () => 0} }`,
+		true
+		);
+
 	// MAIN
 	addModification('document.addEventListener("contextmenu",m=>m.preventDefault());', /*js*/`
 		// my code lol
@@ -599,8 +549,6 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 					};
 				}
 				addoption(name, typee, defaultt) {
-					// ! the last item in the option array should never be changed.
-					// ! because it is used in the .reset command
 					this.options[name] = [typee, defaultt, name, defaultt];
 					return this.options[name];
 				}
@@ -619,14 +567,13 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 			});
 			new Module("AntiCheat", function(callback) {
 				if (!callback)
-					return; // TODO: deinitialization logic
+					return; 
 				const entities = game.world.entitiesDump;
 				for (const entity of entities) {
 						if (!entity instanceof EntityPlayer)
-							continue; // only go through players
+							continue; 
 						if (entity.mode.isCreative() || entity.mode.isSpectator())
-							continue; // ignore Albert einstein or someone who died
-						// TODO: track the player's position and get the difference from previous position to new position.
+							continue; 
 				}
 			})
 
@@ -642,26 +589,51 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 			const velocity = new Module("Velocity", function() {});
 			velocityhori = velocity.addoption("Horizontal", Number, 0);
 			velocityvert = velocity.addoption("Vertical", Number, 0);
+   
+			// Nofall beta?
+   			let noFallExtraYBeta;
+			const NoFallBeta = new Module("NoFallBeta", function(callback) {
+				if (callback) {
+					tickLoop["NoFallBeta"] = function() {
+						// check if the player is falling and above a block
+						// player.fallDistance = 0;
+						const boundingBox = player.getEntityBoundingBox();
+						const clone = boundingBox.min.clone();
+						clone.y -= noFallExtraYBeta[1];
+						const block = rayTraceBlocks(boundingBox.min, clone, true, false, false, game.world);
+						if (block) {
+							sendY = player.pos.y + noFallExtraYBeta[1];
+						}
+					}
+				} else {
+					delete tickLoop["NoFallBeta"];
+				}
+			});
+			noFallExtraYBeta = NoFallBeta.addoption("extraY", Number, .41);
+
 
 			// NoFall
 			new Module("NoFall", function(callback) {
-				if (callback) {
-					let ticks = 0;
-					tickLoop["NoFall"] = function() {
-        				const ray = rayTraceBlocks(player.getEyePos(), player.getEyePos().clone().setY(0), false, false, false, game.world);
-						if (player.fallDistance > 2.5 && ray) {
-							ClientSocket.sendPacket(new SPacketPlayerPosLook({pos: {x: player.pos.x, y: ray.hitVec.y, z: player.pos.z}, onGround: true}));
-							player.fallDistance = 0;
-						}
-					};
+				if (!callback) {
+					delete tickLoop["NoFall"];
+	 				// only other module that uses desync right now is Fly.
+	  				if (!fly.enabled) desync = false;
+					return;
 				}
-				else delete tickLoop["NoFall"];
+				let shouldDesync = false;
+				tickLoop["NoFall"] = function() {
+					if (!desync && shouldDesync) desync = true;
+	 				// this will force desync off even if fly is on, but I'm too lazy to make an entire priority system
+	  				// or something just to fix the 0 uses of fly while you're on the ground
+	 				else if (player.onGround && shouldDesync && desync) desync = false;
+	  				shouldDesync = !player.onGround && player.motionY < -0.6 && player.fallDistance >= 2.5;
+				};
 			});
 
 			// WTap
 			new Module("WTap", function() {});
 
-			// AntiVoid
+			// AntiFall
 			new Module("AntiFall", function(callback) {
 				if (callback) {
 					let ticks = 0;
@@ -846,52 +818,64 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 			}
 
 			// Fly
-			let flyvalue, flyvert, flyEndMotion, flyMultiplier, flytimer, flytick, funny;
+			let flyvalue, flyvert, flybypass;
 			const fly = new Module("Fly", function(callback) {
-                reloadTickLoop(callback ? 50 / flytimer[1] : 50);
-				if (callback) {
-                    funny = false;
-					let ticks = 0;
-                    let flyticks = 0;
-                    let setticks = 0;
-					tickLoop["Fly"] = function() {
-						ticks++;
-                        if (!funny) {
-                            funny = player.motion.y <= 0 && !player.onGround;
-                            if (funny) {
-                              flyticks = flytick[1];
-                            }
-                        }
-
-                        if (flyticks > 0) {
-                            flyticks--;
-                            setticks = 3;
-                            const dir = getMoveDirection(flyticks <= 0 ? 0.26 : (flyvalue[1] * (ticks * flyMultiplier[1])));
-						    player.motion.x = dir.x;
-						    player.motion.z = dir.z;
-						    player.motion.y = flyticks >= 1 ? 0 : player.motion.y + flyEndMotion[1];
-                        }
-
-                        if (setticks > 0) {
-                            setticks--;
-                            if (setticks <= 0) fly.toggle();
-                        }
-					};
-				} else {
+				if (!callback) {
+					if (player) {
+						player.motion.x = Math.max(Math.min(player.motion.x, 0.3), -0.3);
+						player.motion.z = Math.max(Math.min(player.motion.z, 0.3), -0.3);
+					}
 					delete tickLoop["Fly"];
+					desync = false;
+					return;
+				}
+				desync = true;
+				tickLoop["Fly"] = function() {
+					const dir = getMoveDirection(flyvalue[1]);
+					player.motion.x = dir.x;
+					player.motion.z = dir.z;
+					player.motion.y = keyPressedDump("space") ? flyvert[1] : (keyPressedDump("shift") ? -flyvert[1] : 0);
+				};
+			});
+			flybypass = fly.addoption("Bypass", Boolean, true);
+			flyvalue = fly.addoption("Speed", Number, 0.19);
+			flyvert = fly.addoption("Vertical", Number, 0.3);
+			
+   
+   			let jetpackvalue, jetpackvert, jetpackUpMotion, jetpackGlide;
+			// jetpack
+			const jetpack = new Module("JetPack", function(callback) {
+				if (callback) {
+					let ticks = 0;
+					tickLoop["JetPack"] = function() {
+						ticks++;
+						const dir = getMoveDirection(jetpackvalue[1]);
+						player.motion.x = dir.x;
+						player.motion.z = dir.z;
+						const goUp = keyPressedDump("space");
+						const goDown = false; 		//keyPressedDump("shift"), might not be needed
+						if (goUp || goDown) {
+							player.motion.y = goUp ? jetpackvert[1] : -jetpackvert[1];
+						} else {
+							player.motion.y = (ticks < 18 && ticks % 6 < 4 ? jetpackUpMotion[1] : -jetpackGlide[1]);
+						}
+					};
+				}
+				else {
+					delete tickLoop["JetPack"];
 					if (player) {
 						player.motion.x = Math.max(Math.min(player.motion.x, 0.3), -0.3);
 						player.motion.z = Math.max(Math.min(player.motion.z, 0.3), -0.3);
 					}
 				}
 			});
-			flyMultiplier = fly.addoption("Multiplier", Number, 1.15);
-			flyEndMotion = fly.addoption("EndMotion", Number, 1.15);
-			flyvalue = fly.addoption("Speed", Number, 2);
-            flytimer = fly.addoption("Timer", Number, 0.5);
-            flytick = fly.addoption("Ticks", Number, 6);
-			flyvert = fly.addoption("Vertical", Number, 0.7);
+			jetpackvalue = jetpack.addoption("Speed", Number, 2);
+			jetpackGlide = jetpack.addoption("Glide", Number, 0.27);
+			jetpackUpMotion = jetpack.addoption("UpMotion", Number, 4);
+			jetpackvert = jetpack.addoption("Vertical", Number, 0.27);
 
+
+   
 			// InfiniteFly
 			let infiniteFlyVert;
 			const infiniteFly = new Module("InfiniteFly", function(callback) {
@@ -924,7 +908,6 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 			new Module("InvWalk", function() {});
 			new Module("KeepSprint", function() {});
 			new Module("NoSlowdown", function() {});
-			new Module("MusicFix", function() {});
 
 			// Speed
 			let speedvalue, speedjump, speedauto;
@@ -1091,90 +1074,199 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 			cheststealtools = cheststeal.addoption("Tools", Boolean, false);
 
 
-			function getPossibleSides(pos) {
-				for(const side of EnumFacing.VALUES) {
-					const state = game.world.getBlockState(pos.add(side.toVector().x, side.toVector().y, side.toVector().z));
-					if (state.getBlock().material != Materials.air) return side.getOpposite();
-				}
-			}
+			let scaffoldtower, oldHeld, scaffoldextend, scaffoldcycle;
+let tickCount = 0;
 
-			function switchSlot(slot) {
-				player.inventory.currentItem = slot;
-				game.info.selectedSlot = slot;
-			}
+function getPossibleSides(pos) {
+    const possibleSides = [];
+    for (const side of EnumFacing.VALUES) {
+        const offset = side.toVector();
+        const state = game.world.getBlockState(pos.add(offset.x, offset.y, offset.z));
+        if (state.getBlock().material !== Materials.air) {
+            possibleSides.push(side.getOpposite());
+        }
+    }
+    return possibleSides.length > 0 ? possibleSides[0] : null;
+}
 
-			let scaffoldtower, oldHeld, scaffoldextend;
-			const scaffold = new Module("Scaffold", function(callback) {
-				if (callback) {
-					if (player) oldHeld = game.info.selectedSlot;
-					tickLoop["Scaffold"] = function() {
-						for(let i = 0; i < 9; i++) {
-							const item = player.inventory.main[i];
-							if (item && item.item instanceof ItemBlock && item.item.block.getBoundingBox().max.y == 1 && item.item.name != "tnt") {
-								switchSlot(i);
-								break;
-							}
-						}
+function switchSlot(slot) {
+    player.inventory.currentItem = slot;
+    game.info.selectedSlot = slot;
+}
 
-						const item = player.inventory.getCurrentItem();
-						if (item && item.getItem() instanceof ItemBlock) {
-							let placeSide;
-							let pos = new BlockPos(player.pos.x, player.pos.y - 1, player.pos.z);
-							if (game.world.getBlockState(pos).getBlock().material == Materials.air) {
-								placeSide = getPossibleSides(pos);
-								if (!placeSide) {
-									let closestSide, closestPos;
-									let closest = 999;
-									for(let x = -5; x < 5; ++x) {
-										for (let z = -5; z < 5; ++z) {
-											const newPos = new BlockPos(pos.x + x, pos.y, pos.z + z);
-											const checkNearby = getPossibleSides(newPos);
-											if (checkNearby) {
-												const newDist = player.pos.distanceTo(new Vector3$1(newPos.x, newPos.y, newPos.z));
-												if (newDist <= closest) {
-													closest = newDist;
-													closestSide = checkNearby;
-													closestPos = newPos;
-												}
-											}
-										}
-									}
+const scaffold = new Module("DevScaffold", function(callback) {
+    if (callback) {
+        if (player) oldHeld = game.info.selectedSlot;
 
-									if (closestPos) {
-										pos = closestPos;
-										placeSide = closestSide;
-									}
-								}
-							}
+        tickLoop["DevScaffold"] = function() {
+            tickCount++;
 
-							if (placeSide) {
-								const dir = placeSide.getOpposite().toVector();
-								const newDir = placeSide.toVector();
-								const placeX = pos.x + dir.x;
-								const placeZ = pos.z + dir.z;
-								// for (let extendX = 0; extendX < scaffoldextend[1]; extendX++) {
-								// 	console.info("ExtendX:", extendX);
-								// }
-								const placePosition = new BlockPos(placeX, keyPressedDump("shift") ? pos.y - (dir.y + 2) : pos.y + dir.y, placeZ);
-								const hitVec = new Vector3$1(placePosition.x + (newDir.x != 0 ? Math.max(newDir.x, 0) : Math.random()), placePosition.y + (newDir.y != 0 ? Math.max(newDir.y, 0) : Math.random()), placePosition.z + (newDir.z != 0 ? Math.max(newDir.z, 0) : Math.random()));
-								if (scaffoldtower[1] && keyPressedDump("space") && dir.y == -1 && player.motion.y < 0.2 && player.motion.y > 0.15) player.motion.y = 0.42;
-								if (keyPressedDump("shift") && dir.y == 1 && player.motion.y > -0.2 && player.motion.y < -0.15) player.motion.y = -0.42;
-								if (playerControllerDump.onPlayerRightClick(player, game.world, item, placePosition, placeSide, hitVec)) hud3D.swingArm();
-								if (item.stackSize == 0) {
-									player.inventory.main[player.inventory.currentItem] = null;
-									return;
-								}
-							}
-						}
-					}
-				}
-				else {
-					if (player && oldHeld != undefined) switchSlot(oldHeld);
-					delete tickLoop["Scaffold"];
-				}
-			});
-			scaffoldtower = scaffold.addoption("Tower", Boolean, true);
-			// scaffoldextend = scaffold.addoption("Extend", Number, 0);
+            // 🔁 Auto-select blocks & cycle between them
+            let slotsWithBlocks = [];
+            for (let i = 0; i < 9; i++) {
+                const item = player.inventory.main[i];
+                if (
+                    item &&
+                    item.item instanceof ItemBlock &&
+                    item.item.block.getBoundingBox().max.y === 1 &&
+                    item.item.name !== "tnt"
+                ) {
+                    slotsWithBlocks.push(i);
+                }
+            }
+
+            if (slotsWithBlocks.length >= 2) {
+                const selected = Math.floor(tickCount / scaffoldcycle[1]) % slotsWithBlocks.length;
+                switchSlot(slotsWithBlocks[selected]);
+            } else if (slotsWithBlocks.length > 0) {
+                switchSlot(slotsWithBlocks[0]); // fallback
+            }
+
+            const item = player.inventory.getCurrentItem();
+            if (!item || !(item.getItem() instanceof ItemBlock)) return;
+
+            let flooredX = Math.floor(player.pos.x);
+            let flooredY = Math.floor(player.pos.y);
+            let flooredZ = Math.floor(player.pos.z);
+
+            let futureX = player.pos.x + player.motion.x;
+            let futureZ = player.pos.z + player.motion.z;
+            let flooredFutureX = Math.floor(futureX);
+            let flooredFutureZ = Math.floor(futureZ);
+
+            let positionsToCheck = [
+                new BlockPos(flooredX, flooredY - 1, flooredZ),
+                new BlockPos(flooredFutureX, flooredY - 1, flooredFutureZ)
+            ];
+
+            for (let pos of positionsToCheck) {
+                if (game.world.getBlockState(pos).getBlock().material === Materials.air) {
+                    let placeSide = getPossibleSides(pos);
+
+                    if (!placeSide) {
+                        let closestSide = null;
+                        let closestPos = null;
+                        let closestDist = Infinity;
+
+                        for (let x = -5; x <= 5; x++) {
+                            for (let z = -5; z <= 5; z++) {
+                                const newPos = new BlockPos(pos.x + x, pos.y, pos.z + z);
+                                const side = getPossibleSides(newPos);
+                                if (side) {
+                                    const dist = player.pos.distanceTo(new Vector3$1(newPos.x, newPos.y, newPos.z));
+                                    if (dist < closestDist) {
+                                        closestDist = dist;
+                                        closestSide = side;
+                                        closestPos = newPos;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (closestPos) {
+                            pos = closestPos;
+                            placeSide = closestSide;
+                        }
+                    }
+
+                    if (placeSide) {
+                        const dir = placeSide.getOpposite().toVector();
+
+                        let offsetX = dir.x;
+                        let offsetY = dir.y;
+                        let offsetZ = dir.z;
+
+                        if (scaffoldextend[1] > 0) {
+                            offsetX *= scaffoldextend[1];
+                            offsetZ *= scaffoldextend[1];
+                        }
+
+                        const placeX = pos.x + offsetX;
+                        const placeY = keyPressedDump("shift")
+                            ? pos.y - (dir.y + 2)
+                            : pos.y + dir.y;
+                        const placeZ = pos.z + offsetZ;
+
+                        const placePosition = new BlockPos(placeX, placeY, placeZ);
+
+                        function randomFaceOffset(face) {
+                            const rand = () => 0.1 + Math.random() * 0.8;
+                            if (face.getAxis() === "Y") {
+                                return {
+                                    x: placePosition.x + rand(),
+                                    y: placePosition.y + (face === EnumFacing.UP ? 0.95 : 0.05) + Math.random() * 0.04,
+                                    z: placePosition.z + rand()
+                                };
+                            } else if (face.getAxis() === "X") {
+                                return {
+                                    x: placePosition.x + (face === EnumFacing.EAST ? 0.95 : 0.05) + Math.random() * 0.04,
+                                    y: placePosition.y + rand(),
+                                    z: placePosition.z + rand()
+                                };
+                            } else {
+                                return {
+                                    x: placePosition.x + rand(),
+                                    y: placePosition.y + rand(),
+                                    z: placePosition.z + (face === EnumFacing.SOUTH ? 0.95 : 0.05) + Math.random() * 0.04
+                                };
+                            }
+                        }
+
+                        const hitOffsets = randomFaceOffset(placeSide);
+                        const hitVec = new Vector3$1(hitOffsets.x, hitOffsets.y, hitOffsets.z);
+
+                        const dx = hitVec.x - player.pos.x;
+                        const dy = hitVec.y - (player.pos.y + player.getEyeHeight());
+                        const dz = hitVec.z - player.pos.z;
+                        const distHorizontal = Math.sqrt(dx * dx + dz * dz);
+
+                        const rotYaw = Math.atan2(dz, dx) * (180 / Math.PI) - 90;
+                        const rotPitch = -Math.atan2(dy, distHorizontal) * (180 / Math.PI);
+                        player.rotationYaw = rotYaw;
+                        player.rotationPitch = Math.max(-90, Math.min(90, rotPitch));
+
+                        if (
+                            scaffoldtower[1] &&
+                            keyPressedDump("space") &&
+                            dir.y === -1 &&
+                            Math.abs(player.pos.x - flooredX - 0.5) < 0.2 &&
+                            Math.abs(player.pos.z - flooredZ - 0.5) < 0.2
+                        ) {
+                            if (player.motion.y < 0.2 && player.motion.y > 0.15) {
+                                player.motion.y = 0.42;
+                            }
+                        }
+
+                        if (keyPressedDump("shift") && dir.y === 1) {
+                            if (player.motion.y > -0.2 && player.motion.y < -0.15) {
+                                player.motion.y = -0.42;
+                            }
+                        }
+
+                        if (playerControllerDump.onPlayerRightClick(player, game.world, item, placePosition, placeSide, hitVec)) {
+                            hud3D.swingArm();
+                        }
+
+                        if (item.stackSize === 0) {
+                            player.inventory.main[player.inventory.currentItem] = null;
+                        }
+                    }
+
+                    break; // ✅ Stop checking after placing
+                }
+            }
+        };
+    } else {
+        if (player && oldHeld !== undefined) {
+            switchSlot(oldHeld);
+        }
+        delete tickLoop["DevScaffold"];
+    }
+});
+
+scaffoldtower = scaffold.addoption("Tower", Boolean, true);
+scaffoldextend = scaffold.addoption("Extend", Number, 1);
+scaffoldcycle = scaffold.addoption("CycleSpeed", Number, 10);
 
 			let timervalue;
 			const timer = new Module("Timer", function(callback) {
@@ -1191,14 +1283,254 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 			const chatdisabler = new Module("ChatDisabler", function() {});
 			chatdisablermsg = chatdisabler.addoption("Message", String, "youtube.com/c/7GrandDadVape");
 			new Module("FilterBypass", function() {});
+   
+    
+    const InvCleaner = new Module("InvCleaner", function (callback) {
+    if (!callback) {
+        delete tickLoop["InvCleaner"];
+        return;
+    }
 
-			const survival = new Module("SurvivalMode", function(callback) {
-				if (callback) {
-					if (player) player.setGamemode(GameMode.fromId("survival"));
-					survival.toggle();
-				}
-			});
+    const armorPriority = ["leather", "chain", "iron", "diamond"];
+    const weaponClasses = new Set(["ItemSword", "ItemAxe", "ItemBow", "ItemPickaxe"]);
+    const essentials = ["gapple", "golden apple", "ender pearl", "fire charge"];
+    const customKeep = ["god helmet", "legend boots"];
+    const bestArmor = {};
+    const bestItems = {};
+    let lastRun = 0;
 
+    function getArmorScore(stack) {
+        const item = stack.getItem();
+        const material = item.getArmorMaterial?.()?.toLowerCase?.() ?? "unknown";
+        const priority = armorPriority.indexOf(material);
+        const durability = stack.getMaxDamage() - stack.getItemDamage();
+        return (priority === -1 ? -999 : priority * 1000) + durability;
+    }
+
+    function getMaterialScore(name) {
+        name = name.toLowerCase();
+        if (name.includes("diamond")) return 4;
+        if (name.includes("iron")) return 3;
+        if (name.includes("chain")) return 2;
+        if (name.includes("wood")) return 1;
+        return 0;
+    }
+
+    function getScore(stack, item) {
+        const damage = item.getDamageVsEntity?.() ?? 0;
+        const enchants = stack.getEnchantmentTagList()?.length ?? 0;
+        const material = getMaterialScore(stack.getDisplayName());
+        return damage + enchants * 1.5 + material * 0.5;
+    }
+
+    function isSameItem(a, b) {
+        if (!a || !b) return false;
+        const nameA = a.stack.getDisplayName()?.toLowerCase();
+        const nameB = b.stack.getDisplayName()?.toLowerCase();
+        const enchA = a.stack.getEnchantmentTagList()?.toString();
+        const enchB = b.stack.getEnchantmentTagList()?.toString();
+        return nameA === nameB && enchA === enchB;
+    }
+
+    function shouldKeep(stack) {
+        const name = stack.getDisplayName().toLowerCase();
+        return essentials.some(k => name.includes(k)) || customKeep.some(k => name.includes(k));
+    }
+
+    tickLoop["InvCleaner"] = function () {
+        const now = Date.now();
+        if (now - lastRun < 65) return;
+        lastRun = now;
+
+        const slots = player?.inventoryContainer?.inventorySlots;
+        if (!player.openContainer || player.openContainer !== player.inventoryContainer || !slots || slots.length < 36) return;
+
+        Object.keys(bestArmor).forEach(k => delete bestArmor[k]);
+        Object.keys(bestItems).forEach(k => delete bestItems[k]);
+
+        const toDrop = [];
+
+        // Preload equipped armor
+        [5, 6, 7, 8].forEach(i => {
+            const stack = slots[i]?.getStack();
+            if (stack?.getItem() instanceof ItemArmor) {
+                const armorType = stack.getItem().armorType ?? "unknown";
+                bestArmor["armor_" + armorType] = { stack, index: i };
+            }
+        });
+
+        for (let i = 0; i < 36; i++) {
+            const stack = slots[i]?.getStack();
+            if (!stack) continue;
+
+            const item = stack.getItem();
+            const className = item.constructor.name;
+
+            if (shouldKeep(stack)) continue;
+
+            if (item instanceof ItemBlock) {
+                if (stack.stackSize < 5) toDrop.push(i);
+                continue;
+            }
+
+            if (item instanceof ItemArmor) {
+    const armorType = item.armorType ?? "unknown";
+    const key = "armor_" + armorType;
+    const score = getArmorScore(stack);
+    const existing = bestArmor[key];
+
+    if (!existing) {
+        bestArmor[key] = { stack, index: i, score };
+    } else {
+        const existingScore = existing.score;
+        if (score > existingScore) {
+            toDrop.push(existing.index);
+            bestArmor[key] = { stack, index: i, score };
+        } else {
+            toDrop.push(i); // drop lower-score armor
+        }
+    }
+    continue;
+}
+
+            if (weaponClasses.has(className)) {
+                const score = getScore(stack, item);
+                const existing = bestItems[className];
+
+                if (!existing || score > existing.score) {
+                    if (existing && existing.index !== i) toDrop.push(existing.index);
+                    bestItems[className] = { stack, score, index: i };
+                } else if (existing && isSameItem(bestItems[className], { stack })) {
+                    toDrop.push(i); // Drop exact duplicate
+                } else {
+                    toDrop.push(i);
+                }
+                continue;
+            }
+
+            toDrop.push(i);
+        }
+
+        toDrop.forEach(dropSlot);
+    };
+});
+
+function dropSlot(index) {
+    const windowId = player.openContainer.windowId;
+    playerControllerDump.windowClickDump(windowId, index, 0, 0, player);
+    playerControllerDump.windowClickDump(windowId, -999, 0, 0, player); // drop outside
+}
+
+let funnyMessages = [
+"Prediction ACs: great at guessing wrong.",
+"Lag spikes? Blame the AC trying to play psychic.",
+"Jesus walked on water. ACs still trip over puddles.",
+"Walking on air? ACs call it a glitch. We call it precision.",
+"Prediction ACs eat packets. Too bad they choke on velocity.",
+"Gravity’s a suggestion. ACs treat it like gospel.",
+"Scaffold smoother than your AC’s excuses.",
+"Tick-perfect bridging. ACs still counting frames.",
+"Snapped into water? ACs thought you were a fish.",
+"Water-walking? ACs still learning to swim.",
+"Falling? Nah. Just descending with style while ACs panic.",
+"Patch notes say 'fixed.' Reality says 'still broken.'",
+"Bypass? No. ACs just forgot how to detect.",
+"Modules adapt. ACs react — poorly.",
+"Silent movement. Loud AC confusion.",
+"Prediction? Velocity? ACs still buffering.",
+"No permission asked. ACs weren’t invited.",
+"Every module is a flex. ACs just fold.",
+"No config needed. ACs still reading the manual.",
+"Toggle. Deliver. ACs scramble.",
+"ACs don’t detect. They guess and hope.",
+"Unleashed. ACs unleashed their incompetence.",
+"No drama. Just domination.",
+"ACs patch. We evolve.",
+"Cheating? No. Just outperforming your AC’s imagination.",
+"Toggle scaffold. Build legacy. ACs build logs no one reads.",
+"Flinch? ACs do. We don’t.",
+"Modules = superpowers. ACs = kryptonite to themselves.",
+"ACs call it daddy. We call it Tuesday.",
+"Still undetected. Still undefeated. ACs still confused.",
+"Toggle one module. Server cries. ACs sob.",
+"Patch notes scared. ACs terrified.",
+"Your client warned you. ACs didn’t listen.",
+"Smooth as silk. ACs still stuck in sandpaper mode.",
+"Stealth so clean, ACs think it's a ghost."
+];
+
+const AutoFunnyChat = new Module("AutoFunnyChat", function(callback) {
+    if (!callback) {
+        delete tickLoop["AutoFunnyChat"];
+        if (window.__autoFunnyKillMsgListener) {
+            ClientSocket.off && ClientSocket.off("CPacketMessage", window.__autoFunnyKillMsgListener);
+            window.__autoFunnyKillMsgListener = undefined;
+        }
+        return;
+    }
+    // Periodic random funny message
+    let lastSent = 0;
+    tickLoop["AutoFunnyChat"] = function() {
+        if (Date.now() - lastSent > 40000) { // Sends every 40 seconds
+            const msg = funnyMessages[Math.floor(Math.random() * funnyMessages.length)];
+            ClientSocket.sendPacket(new SPacketMessage({text: msg}));
+            lastSent = Date.now();
+        }
+    };
+
+    // Also send on kill events (Miniblox chat detection)
+    if (!window.__autoFunnyKillMsgListener) {
+        window.__autoFunnyKillMsgListener = function(h) {
+            if (
+                h.text &&
+                (
+                    h.text.includes("You eliminated") ||
+                    h.text.includes("You knocked out") ||
+                    h.text.includes("You sent") ||
+                    (h.text.includes("eliminated by") && h.text.includes(player.name)) ||
+                    h.text.includes(player.name + " eliminated")
+                )
+            ) {
+                const msg = funnyMessages[Math.floor(Math.random() * funnyMessages.length)];
+                setTimeout(function() {
+                    ClientSocket.sendPacket(new SPacketMessage({text: msg}));
+                }, 500 + Math.random() * 1000); // slight delay for realism
+            }
+        };
+        ClientSocket.on("CPacketMessage", window.__autoFunnyKillMsgListener);
+    }
+});
+
+const jesus = new Module("Jesus", function(callback) {
+    if (callback) {
+        tickLoop["Jesus"] = function() {
+            const posX = Math.floor(player.pos.x);
+            const posY = Math.floor(player.pos.y - 0.01);
+            const posZ = Math.floor(player.pos.z);
+
+            const blockBelow = game.world.getBlockState(new BlockPos(posX, posY, posZ)).getBlock();
+            const isLiquid = blockBelow.material === Materials.water || blockBelow.material === Materials.lava;
+
+            if (isLiquid) {
+                // Prevent sinking
+                player.motion.y = 0;
+
+                // Lock Y position to surface
+                player.pos.y = Math.floor(player.pos.y);
+
+                // Spoof ground contact
+                player.onGround = true;
+
+                // Optional bounce when jumping
+                if (keyPressedDump("space")) {
+                    player.motion.y = 0.42;
+                }
+            }
+        };
+    } else {
+        delete tickLoop["Jesus"];
+    }
+});
 			globalThis.${storeName}.modules = modules;
 			globalThis.${storeName}.profile = "default";
 		})();
@@ -1310,4 +1642,435 @@ h.addVelocity(-Math.sin(this.yaw) * g * .5, .1, -Math.cos(this.yaw) * g * .5);
 	else {
 		execute(publicUrl);
 	}
+})();
+(async function () {
+  try {
+    // Loads the Minecraft Font onto GUI
+    const fontLink = document.createElement("link");
+    fontLink.href = "https://fonts.cdnfonts.com/css/minecraft-4";
+    fontLink.rel = "stylesheet";
+    document.head.appendChild(fontLink);
+
+    // Wait for Modules!
+    await new Promise((resolve) => {
+      const loop = setInterval(() => {
+        if (unsafeWindow?.globalThis?.[storeName]?.modules) {
+          clearInterval(loop);
+          resolve();
+        }
+      }, 20);
+    });
+
+    injectGUI(unsafeWindow.globalThis[storeName]);
+  } catch (err) {
+    console.error("[ClickGUI] Init failed:", err);          // Checks for any errors that could break the GUI
+  }
+
+  function injectGUI(store) {
+    const categories = {                                                             // If there is any module i have missed pls add it to the categories
+      Combat: ["autoclicker", "killaura", "velocity", "wtap"],
+      Movement: [
+        "scaffold","jesus","phase","nofall","antifall","sprint","keepsprint","step",
+        "speed","fly","noslowdown","spiderclimb","jetpack"
+      ],
+      "Player / Render": [
+        "invcleaner","invwalk","autoarmor","ghostjoin",
+        "playeresp","nametags+","textgui","clickgui"
+      ],
+      World: ["fastbreak","breaker","autocraft","cheststeal","timer"],
+      Utility: [
+        "autorespawn","autorejoin","autoqueue",                         
+        "autovote","filterbypass","anticheat",
+        "autofunnychat","musicfix","auto-funnychat","music-fix"         // AutoFunnyChat doesnt enable properly but it works perfectly fine (disable) dont worry
+      ]
+    };
+
+    const catIcons = {
+      Combat: "⚔️",
+      Movement: "🏃",
+      "Player / Render": "🧑👁️",
+      World: "🌍",
+      Utility: "🛠️"
+    };
+
+    // === Styles (LiquidBounce Theme + Scrollbars) ===
+    const style = document.createElement("style");
+    style.textContent = `
+      @keyframes guiEnter {0%{opacity:0;transform:scale(0.9);}100%{opacity:1;transform:scale(1);}}
+      .lb-panel {
+        position:absolute;
+        width:220px;
+        background:#111;
+        border:2px solid #00aaff;
+        border-radius:0;
+        font-family:"Minecraft", monospace;
+        color:white;
+        animation:guiEnter .25s ease-out;
+        z-index:100000;
+
+        /* Scrollable */
+        max-height:420px;
+        overflow-y:auto;
+        overflow-x:hidden;
+      }
+      .lb-panel::-webkit-scrollbar { width:6px; }
+      .lb-panel::-webkit-scrollbar-thumb { background:#00aaff; }
+      .lb-panel::-webkit-scrollbar-track { background:#111; }
+      .lb-header {
+        background:#0a0a0a;
+        padding:6px;
+        font-weight:bold;
+        cursor:move;
+        user-select:none;
+        text-align:center;
+        border-bottom:1px solid #00aaff;
+        color:white;
+      }
+      .lb-module {
+        padding:4px 6px;
+        border-bottom:1px solid #1b1b1b;
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        cursor:pointer;
+      }
+      .lb-module:hover { background:#151a20; }
+      .lb-module.active { color:#00aaff; }
+      .lb-options {
+        display:none;
+        flex-direction:column;
+        gap:4px;
+        padding:4px 6px;
+        background:#0f0f12;
+        border-top:1px dashed #1e1e1e;
+      }
+      .lb-options.show { display:flex; animation:guiEnter .2s ease-out; }
+      .lb-options label {
+        font-size:12px;
+        display:flex;
+        justify-content:space-between;
+        color:white;
+      }
+      .lb-options input[type="range"] { flex:1; margin-left:4px; }
+      .lb-options input[type="text"] {
+        flex:1;
+        margin-left:4px;
+        font-size:12px;
+        background:#0a0a0a;
+        color:white;
+        border:1px solid #00aaff;
+        font-family:"Minecraft", monospace;
+        padding:2px;
+      }
+      .notif-wrap {
+        position:fixed; bottom:40px; right:30px;
+        display:flex; flex-direction:column; align-items:flex-end;
+        pointer-events:none; z-index:999999;
+      }
+      .notif {
+        background:#0a0a0a;
+        color:white;
+        padding:8px 12px;
+        margin-top:6px;
+        border:2px solid #00aaff;
+        border-radius:0;
+        font-family:"Minecraft", monospace;
+        opacity:1;
+        transform:translateX(120%);
+        transition:opacity .3s, transform .3s ease;
+      }
+      .lb-searchwrap {
+        position:fixed;
+        top:15px;
+        left:50%;
+        transform:translateX(-50%);
+        z-index:100001;
+        background:#0a0a0a;
+        border:2px solid #00aaff;
+        border-radius:0;
+        padding:4px 6px;
+        font-family:"Minecraft", monospace;
+      }
+      .lb-search {
+        background:#111;
+        border:none;
+        outline:none;
+        color:white;
+        font-size:13px;
+        width:180px;
+        font-family:"Minecraft", monospace;
+      }
+      .lb-search::placeholder { color:#00aaff; opacity:0.6; }
+    `;
+    document.head.appendChild(style);
+
+    // === Notifications ===
+    const notifWrap = document.createElement("div");
+    notifWrap.className = "notif-wrap";
+    document.body.appendChild(notifWrap);
+
+    function showNotif(msg, dur = 3000) {
+      const n = document.createElement("div");
+      n.className = "notif";
+      n.textContent = msg;
+      notifWrap.appendChild(n);
+      setTimeout(() => (n.style.transform = "translateX(0)"), 30);
+      setTimeout(() => {
+        n.style.opacity = "0";
+        n.style.transform = "translateX(120%)";
+      }, dur);
+      setTimeout(() => n.remove(), dur + 400);
+    }
+
+    // === Persistence Helpers ===
+    function saveModuleState(name, mod) {
+      const saved = JSON.parse(localStorage.getItem("lb-mods") || "{}");
+      const opts = {};
+      if (mod.options) {
+        Object.entries(mod.options).forEach(([key, opt]) => {
+          opts[key] = opt[1];
+        });
+      }
+      saved[name] = { enabled: mod.enabled, bind: mod.bind, options: opts };
+      localStorage.setItem("lb-mods", JSON.stringify(saved));
+    }
+
+    function loadModuleState(name, mod) {
+      const saved = JSON.parse(localStorage.getItem("lb-mods") || "{}");
+      if (saved[name]) {
+        if (saved[name].enabled !== mod.enabled && typeof mod.toggle === "function") {
+          mod.toggle();
+        }
+        if (saved[name].bind) {
+          mod.setbind(saved[name].bind);
+        }
+        if (saved[name].options && mod.options) {
+          Object.entries(saved[name].options).forEach(([key, val]) => {
+            if (mod.options[key]) mod.options[key][1] = val;
+          });
+        }
+      }
+    }
+
+    // === Panels ===
+    const panels = {};
+    Object.keys(categories).forEach((cat, i) => {
+      const panel = document.createElement("div");
+      panel.className = "lb-panel";
+      panel.style.left = 40 + i * 240 + "px";
+      panel.style.top = "100px";
+
+      const header = document.createElement("div");
+      header.className = "lb-header";
+      header.textContent = `${catIcons[cat]} ${cat}`;
+      panel.appendChild(header);
+
+      // Restore saved pos
+      const saved = localStorage.getItem("lb-pos-" + cat);
+      if (saved) {
+        const { left, top } = JSON.parse(saved);
+        panel.style.left = left;
+        panel.style.top = top;
+      }
+
+      // Dragging
+      let dragging = false, offsetX, offsetY;
+      header.addEventListener("mousedown", (e) => {
+        dragging = true;
+        offsetX = e.clientX - panel.offsetLeft;
+        offsetY = e.clientY - panel.offsetTop;
+      });
+      document.addEventListener("mousemove", (e) => {
+        if (dragging) {
+          panel.style.left = e.clientX - offsetX + "px";
+          panel.style.top = e.clientY - offsetY + "px";
+        }
+      });
+      document.addEventListener("mouseup", () => {
+        if (dragging) {
+          dragging = false;
+          localStorage.setItem("lb-pos-" + cat,
+            JSON.stringify({ left: panel.style.left, top: panel.style.top })
+          );
+        }
+      });
+
+      panels[cat] = panel;
+      document.body.appendChild(panel);
+    });
+
+    // === Modules ===
+    Object.entries(store.modules).forEach(([name, mod]) => {
+      console.log("[ClickGUI] Found module:", name);
+
+      let cat = "Utility";
+      for (const [c, keys] of Object.entries(categories)) {
+        if (keys.some((k) => name.toLowerCase().includes(k))) {
+          cat = c; break;
+        }
+      }
+
+      // Restore state
+      loadModuleState(name, mod);
+
+      const row = document.createElement("div");
+      row.className = "lb-module" + (mod.enabled ? " active" : "");
+      row.innerHTML = `<span>${name}</span><span>${mod.enabled ? "ON" : "OFF"}</span>`;
+
+      const optionsBox = document.createElement("div");
+      optionsBox.className = "lb-options";
+
+      // Toggle
+      row.addEventListener("mousedown", (e) => {
+        if (e.button === 0) {
+          if (typeof mod.toggle === "function") mod.toggle();
+          row.classList.toggle("active", mod.enabled);
+          row.lastChild.textContent = mod.enabled ? "ON" : "OFF";
+          showNotif(`${name} ${mod.enabled ? "enabled ✅" : "disabled ❌"}`);
+          saveModuleState(name, mod);
+        }
+      });
+
+      // Expand
+      row.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        optionsBox.classList.toggle("show");
+      });
+
+      // Options UI
+      if (mod.options) {
+        Object.entries(mod.options).forEach(([key, opt]) => {
+          const [type, val, label] = opt;
+          const line = document.createElement("label");
+          line.textContent = label;
+
+          if (type === Boolean) {
+            const cb = document.createElement("input");
+            cb.type = "checkbox"; cb.checked = val;
+            cb.onchange = () => {
+              opt[1] = cb.checked;
+              saveModuleState(name, mod);
+            };
+            line.appendChild(cb);
+          } else if (type === Number) {
+            const slider = document.createElement("input");
+            slider.type = "range";
+            const [min, max, step] = opt.range ?? [0, 10, 0.1];
+            slider.min = min; slider.max = max; slider.step = step; slider.value = val;
+            slider.oninput = () => {
+              opt[1] = parseFloat(slider.value);
+              saveModuleState(name, mod);
+            };
+            line.appendChild(slider);
+          } else if (type === String) {
+            const input = document.createElement("input");
+            input.type = "text"; input.value = val;
+            input.onchange = () => {
+              opt[1] = input.value;
+              saveModuleState(name, mod);
+            };
+            line.appendChild(input);
+          }
+          optionsBox.appendChild(line);
+        });
+      }
+
+      // Keybind
+      const bindLine = document.createElement("label");
+      bindLine.textContent = "Bind:";
+      const bindInput = document.createElement("input");
+      bindInput.type = "text"; bindInput.value = mod.bind;
+      bindInput.style.width = "70px";
+      bindInput.style.background = "#0a0a0a";
+      bindInput.style.color = "white";
+      bindInput.style.border = "1px solid #00aaff";
+      bindInput.style.fontFamily = '"Minecraft", monospace';
+      bindInput.style.fontSize = "12px";
+      bindInput.style.padding = "2px";
+      bindInput.onchange = (e) => {
+        mod.setbind(e.target.value);
+        showNotif(`${name} bind set to ${e.target.value}`);
+        saveModuleState(name, mod);
+      };
+      bindLine.appendChild(bindInput);
+      optionsBox.appendChild(bindLine);
+
+      panels[cat].appendChild(row);
+      panels[cat].appendChild(optionsBox);
+    });
+
+    // === Reset Layout ===
+    const resetRow = document.createElement("div");
+    resetRow.className = "lb-module";
+    resetRow.style.justifyContent = "flex-start";
+    resetRow.style.paddingLeft = "6px";
+    resetRow.style.fontWeight = "bold";
+    resetRow.style.color = "#00aaff";
+    resetRow.textContent = "↺ Reset Layout";
+    resetRow.addEventListener("click", () => {
+      const defaults = {
+        Combat:{left:"40px",top:"100px"},
+        Movement:{left:"280px",top:"100px"},
+        "Player / Render":{left:"520px",top:"100px"},
+        World:{left:"760px",top:"100px"},
+        Utility:{left:"1000px",top:"100px"}
+      };
+      Object.entries(defaults).forEach(([cat,pos])=>{
+        localStorage.setItem("lb-pos-" + cat, JSON.stringify(pos));
+        if (panels[cat]) { panels[cat].style.left=pos.left; panels[cat].style.top=pos.top; }
+      });
+      showNotif("Layout reset to default positions ✅");
+    });
+    panels["Utility"].appendChild(resetRow);
+
+    // === Reset Config ===
+    const resetConfigRow = document.createElement("div");
+    resetConfigRow.className = "lb-module";
+    resetConfigRow.style.justifyContent = "flex-start";
+    resetConfigRow.style.paddingLeft = "6px";
+    resetConfigRow.style.fontWeight = "bold";
+    resetConfigRow.style.color = "red";
+    resetConfigRow.textContent = "⛔ Reset Config?";
+    resetConfigRow.addEventListener("click", () => {
+      localStorage.removeItem("lb-mods");
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith("lb-pos-"))
+        .forEach((k) => localStorage.removeItem(k));
+      alert("Config has been reset!");
+      location.reload();
+    });
+    panels["Utility"].appendChild(resetConfigRow);
+
+    // === Global Search ===
+    const searchWrap = document.createElement("div");
+    searchWrap.className = "lb-searchwrap";
+    searchWrap.innerHTML = `<input type="text" class="lb-search" placeholder="Search..">`;
+    document.body.appendChild(searchWrap);
+
+    const searchBox = searchWrap.querySelector("input");
+    searchBox.addEventListener("input", () => {
+      const term = searchBox.value.toLowerCase();
+      document.querySelectorAll(".lb-module").forEach((row) => {
+        const name = row.firstChild.textContent.toLowerCase();
+        row.style.display = name.includes(term) ? "flex" : "none";
+      });
+    });
+
+    // === Hide on load ===
+    Object.values(panels).forEach((p) => (p.style.display = "none"));
+    searchWrap.style.display = "none";
+
+    // === Startup notification ===
+    setTimeout(() => { showNotif("[ClickGUI] Press '\\\\' to open GUI", 4000); }, 500);
+
+    // === Toggle the LB GUI ===
+    let visible = false;
+    document.addEventListener("keydown", (e) => {
+      if (e.code === "Backslash") {
+        visible = !visible;
+        Object.values(panels).forEach((p)=> (p.style.display=visible?"block":"none"));
+        searchWrap.style.display = visible ? "block":"none";
+      }
+    });
+  }
 })();
