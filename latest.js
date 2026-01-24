@@ -1,1 +1,1 @@
-{"latest": "none"}
+{"latest": "scripts/script_1769214863.lua"}
